@@ -454,8 +454,22 @@ def render_property_card_db(row: dict, intent: str) -> str:
 URL_RX = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
 STOPWORDS = {"en", "de", "del", "la", "el", "y", "a", "con", "por", "para", "un", "una", "los", "las", "—", "–"}
 
-def _extract_urls(text: str) -> List[str]:
-    return URL_RX.findall(text or "") or []
+def _extract_urls(text: str) -> list[str]:
+    if not text:
+        return []
+
+    # WhatsApp suele adjuntar caracteres invisibles alrededor de las URLs
+    clean = text.strip().replace("\u200b", "").replace("\u2060", "").replace("\ufeff", "")
+
+    # REGEX robusta para cualquier URL real
+    url_regex = re.compile(
+        r"(https?://[^\s<>\"']+)",
+        flags=re.IGNORECASE
+    )
+
+    matches = url_regex.findall(clean)
+    return matches
+
 
 def _slug_to_candidate_text(url: str) -> str:
     try:
