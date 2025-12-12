@@ -711,7 +711,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
     stage = s.get("stage", "menu")
 
-        if stage == "menu":
+    if stage == "menu":
         # 1️⃣ PRIORIDAD ABSOLUTA: si hay LINK, se procesa como propiedad SIEMPRE
         urls = _extract_urls(text)
         if urls:
