@@ -454,21 +454,19 @@ def render_property_card_db(row: dict, intent: str) -> str:
 URL_RX = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
 STOPWORDS = {"en", "de", "del", "la", "el", "y", "a", "con", "por", "para", "un", "una", "los", "las", "—", "–"}
 
-def _extract_urls(text: str) -> list[str]:
+def _extract_urls(text: str) -> List[str]:
+    """Extrae URLs de un texto, tolerando caracteres invisibles de WhatsApp."""
     if not text:
         return []
-
-    # WhatsApp suele adjuntar caracteres invisibles alrededor de las URLs
-    clean = text.strip().replace("\u200b", "").replace("\u2060", "").replace("\ufeff", "")
-
-    # REGEX robusta para cualquier URL real
-    url_regex = re.compile(
-        r"(https?://[^\s<>\"']+)",
-        flags=re.IGNORECASE
+    clean = (
+        text.replace("\u200b", "")
+            .replace("\u2060", "")
+            .replace("\ufeff", "")
+            .strip()
     )
-
+    url_regex = re.compile(r"(https?://[^\s<>"']+)", flags=re.IGNORECASE)
     matches = url_regex.findall(clean)
-    return matches
+    return matches or []
 
 
 def _slug_to_candidate_text(url: str) -> str:
@@ -862,9 +860,34 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 s["last_prompt"] = "qual_disp_venta"
                 return QualifyOut(reply_text=brief + "\n\n" + _ask_qualify_prompt("venta"))
 
+        # Si el usuario envía un link pero no podemos matchear la ficha en la base,
+        # no le pedimos la dirección de nuevo: seguimos el flujo normal con derivación.
+        if urls_zone:
+            s["stage"] = "ask_link_disp"
+            intent = s.get("intent", "alquiler")
+            if intent == "venta":
+                s["last_prompt"] = "qual_disp_venta_link"
+                return QualifyOut(reply_text=_ask_qualify_prompt("venta"))
+            else:
+                s["last_prompt"] = "qual_disp_alq_link"
+                return QualifyOut(reply_text=_ask_disponibilidad())
+
         return QualifyOut(
             reply_text=("No pude identificar la ficha a partir del texto. "
                         "¿Podés confirmarme la *dirección exacta* tal como figura en la publicación?")
+        )
+
+    if stage == "ask_link_disp":
+        # Venimos de un link que no matcheó ficha en la base.
+        intent = s.get("intent", "alquiler")
+        if intent == "venta":
+            s["disp_venta"] = text.strip() or "no informado"
+        else:
+            s["disp_alquiler"] = text.strip() or "no informado"
+        s["stage"] = "ask_handover"
+        s.pop("last_prompt", None)
+        return QualifyOut(
+            reply_text=("Perfecto 😊 ¿Querés que te contacte un asesor humano por este WhatsApp para avanzar?")
         )
 
     if stage == "show_property_asked_qualify":
