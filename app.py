@@ -18,7 +18,7 @@ MYSQL_PORT = int(os.getenv("MYSQLPORT") or os.getenv("MYSQL_PORT") or "3306")
 MYSQL_USER = os.getenv("MYSQLUSER") or os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQLPASSWORD") or os.getenv("MYSQL_PASSWORD")
 MYSQL_DB = os.getenv("MYSQLDATABASE") or os.getenv("MYSQL_DATABASE")
-MYSQL_TABLE = os.getenv("MYSQL_TABLE", "propiedades")
+MYSQL_TABLE = "propiedades"
 
 STATE: Dict[str, Dict[str, Any]] = {}
 
@@ -488,11 +488,12 @@ def _extract_urls(text: str) -> List[str]:
         return []
     clean = (
         text.replace("\u200b", "")
-        .replace("\u2060", "")
-        .replace("\ufeff", "")
-        .strip()
+            .replace("\u2060", "")
+            .replace("\ufeff", "")
+            .strip()
     )
-    url_regex = re.compile(r"(https?://[^\s<>\"']+)", flags=re.IGNORECASE)
+    # Regex simple y robusta: cualquier secuencia sin espacios que empiece con http(s)://
+    url_regex = re.compile(r"(https?://\S+)", flags=re.IGNORECASE)
     matches = url_regex.findall(clean)
     return matches or []
 
@@ -531,23 +532,20 @@ def _try_property_from_link_or_slug(text: str) -> Optional[dict]:
         return None
 
     for u in urls:
-        # ---------------------------
-        # 1) Detectar ID aunque sea el último segmento
-        # ---------------------------
-        path = urlparse(u).path
-        segs = [s for s in path.split("/") if s.isdigit()]
-        if segs:
-            try:
-                pid = int(segs[0])
+        # 1) Detectar ID aunque sea el último segmento de la URL
+        #    Ej: /Apartamento/2011/  -> 2011
+        try:
+            path = urlparse(u).path or ""
+            segments = [seg for seg in path.split("/") if seg.isdigit()]
+            if segments:
+                pid = int(segments[0])
                 row_id = search_db_by_id(pid)
                 if row_id:
                     return row_id
-            except:
-                pass
+        except Exception:
+            pass
 
-        # ---------------------------
-        # 2) Búsqueda por slug
-        # ---------------------------
+        # 2) Búsqueda por slug (dirección / zona)
         slug = _slug_to_candidate_text(u)
         if slug:
             row = search_db_by_address(slug)
@@ -559,8 +557,8 @@ def _try_property_from_link_or_slug(text: str) -> Optional[dict]:
                 if row2:
                     return row2
 
+    # 3) Si no se encontró nada, devolvemos None (el flujo superior decide qué hacer)
     return None
-
 
 
 def _mismatch_msg(user_op: str, prop_op: str) -> str:
@@ -909,47 +907,67 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         )
 
     if stage == "ask_zone_or_address":
-    # Si ya había link guardado, NO volvemos a pedir dirección nunca más
-    urls_zone = _extract_urls(text)
-    if urls_zone:
-        s["last_link"] = urls_zone[0]
+        # El usuario ya está en el flujo de una operación concreta (alquiler/venta).
+        # Si manda un link, lo guardamos y NO volvemos a pedir dirección nunca más.
+        urls_zone = _extract_urls(text)
+        if urls_zone:
+            s["last_link"] = urls_zone[0]
 
-    # Intentar de nuevo detección por link
-    row_link3 = _try_property_from_link_or_slug(text)
-    if row_link3:
-        intent_infer = _infer_intent_from_row(row_link3) or s.get("intent") or "venta"
-        s["prop_row"] = row_link3
-        s["intent"] = intent_infer
-        brief = render_property_card_db(row_link3, intent=intent_infer)
-        s["prop_brief"] = brief
-        s["stage"] = "show_property_asked_qualify"
+        # 1) Intentar detectar ficha a partir del link o slug
+        row_link = _try_property_from_link_or_slug(text)
+        if row_link:
+            intent_infer = _infer_intent_from_row(row_link) or s.get("intent") or "venta"
+            s["prop_row"] = row_link
+            s["intent"] = intent_infer
+            brief = render_property_card_db(row_link, intent=intent_infer)
+            s["prop_brief"] = brief
+            s["stage"] = "show_property_asked_qualify"
 
-        if intent_infer == "alquiler":
-            s["last_prompt"] = "qual_disp_alq"
-            return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
-        else:
-            s["last_prompt"] = "qual_disp_venta"
-            return QualifyOut(reply_text=brief + "\n\n" + _ask_qualify_prompt("venta"))
+            if intent_infer == "alquiler":
+                s["last_prompt"] = "qual_disp_alq"
+                return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
+            else:
+                s["last_prompt"] = "qual_disp_venta"
+                return QualifyOut(reply_text=brief + "\n\n" + _ask_qualify_prompt("venta"))
 
-    # SI EL MENSAJE TIENE LINK PERO NO EXISTE EN LA BD ➜ derivamos igual (NO pedimos dirección)
-    if urls_zone:
-        s["stage"] = "ask_link_disp"
-        intent2 = s.get("intent", "alquiler")
+        # 2) Si el mensaje tiene link pero no encontramos ficha en la base,
+        #    NO volvemos a pedir dirección: pasamos directo a preguntar disponibilidad
+        #    y luego derivamos al asesor con el link.
+        if urls_zone:
+            s["stage"] = "ask_link_disp"
+            intent2 = s.get("intent", "alquiler")
+            if intent2 == "venta":
+                s["last_prompt"] = "qual_disp_venta_link"
+                return QualifyOut(reply_text=_ask_qualify_prompt("venta"))
+            else:
+                s["last_prompt"] = "qual_disp_alq_link"
+                return QualifyOut(reply_text=_ask_disponibilidad())
 
-        if intent2 == "venta":
-            s["last_prompt"] = "qual_disp_venta_link"
-            return QualifyOut(reply_text=_ask_qualify_prompt("venta"))
-        else:
-            s["last_prompt"] = "qual_disp_alq_link"
-            return QualifyOut(reply_text=_ask_disponibilidad())
+        # 3) Caso sin link: intentamos buscar por dirección escrita
+        intent = s.get("intent", "alquiler")
+        row = search_db_by_address(text)
 
-    # Caso sin link y sin coincidencia → única situación en que pedimos dirección
-    return QualifyOut(
-        reply_text=(
-            "No pude identificar la ficha. ¿Podés confirmarme la *dirección exacta* tal como figura en la publicación?"
+        if row:
+            intent_infer2 = _infer_intent_from_row(row) or intent
+            brief2 = render_property_card_db(row, intent=intent_infer2)
+            s["prop_row"] = row
+            s["prop_brief"] = brief2
+            s["intent"] = intent_infer2
+            s["stage"] = "show_property_asked_qualify"
+            if s["intent"] == "alquiler":
+                s["last_prompt"] = "qual_disp_alq"
+                return QualifyOut(reply_text=brief2 + "\n\n" + _ask_disponibilidad())
+            else:
+                s["last_prompt"] = "qual_disp_venta"
+                return QualifyOut(reply_text=brief2 + "\n\n" + _ask_qualify_prompt("venta"))
+
+        # 4) Solo si no hay link ni coincidencia por dirección, pedimos la dirección exacta
+        return QualifyOut(
+            reply_text=(
+                "No pude identificar la ficha. "
+                "¿Podés confirmarme la *dirección exacta* tal como figura en la publicación?"
+            )
         )
-    )
-
 
     if stage == "ask_link_disp":
         intent = s.get("intent", "alquiler")
