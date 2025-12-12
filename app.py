@@ -1,4 +1,3 @@
-# app.py
 import os
 import re
 import unicodedata
@@ -62,14 +61,15 @@ def _say_menu() -> str:
         "Gracias por contactarte con nosotros. ¿En qué te puedo ayudar hoy?\n\n"
         "1️⃣ *Alquileres*\n"
         "2️⃣ *Ventas*\n"
-        "3️⃣ *Tasaciones*\n\n"
+        "3️⃣ *Tasaciones*\n"
+        "4️⃣ *Alquiler temporal*\n\n"
         "📝 Podés escribir el *número* o el *nombre* de la opción.\n"
         "🔄 Si querés empezar de nuevo, escribí *\"reset\"*."
     )
 
 
 def _ask_zone_or_address() -> str:
-    return "¿Tenés dirección o link exacto de la propiedad, o estás averiguando por una zona/barrio?"
+    return "¿Tenés *dirección exacta* o *link* de la propiedad que te interesa?"
 
 def _ask_disponibilidad() -> str:
     return "¡Perfecto! 🕓 Antes de que te contacte nuestro asesor, ¿podrías contarme tu *disponibilidad horaria*?"
@@ -527,6 +527,13 @@ def _is_valuation_intent(t: str) -> bool:
     keys = ["tasacion", "tasación", "tasar", "tasaciones"]
     return any(k in t for k in keys) or t.strip() in {"3", "3-", "3 -"}
 
+def _is_temp_rent_intent(t: str) -> bool:
+    t = _strip_accents(t)
+    if t.strip() in {"4", "4-", "4 -"}:
+        return True
+    keys = ["alquiler temporal", "temporal", "turistico", "turístico"]
+    return any(k in t for k in keys)
+
 def _is_zone_search(t: str) -> bool:
     nt = _strip_accents(t)
     patterns = [
@@ -592,6 +599,14 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         if not text:
             return QualifyOut(reply_text=_say_menu())
 
+        # Alquiler temporal (opción 4)
+        if _is_temp_rent_intent(text):
+            s["intent"] = "temporal"
+            s["stage"] = "temp_ask_addr"
+            return QualifyOut(
+                reply_text="Perfecto 😊 ¿Tenés *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
+            )
+
         user_op = "alquiler" if _is_rental_intent(text) else "venta" if _is_sale_intent(text) else None
 
         row_link = _try_property_from_link_or_slug(text)
@@ -626,6 +641,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
         return QualifyOut(reply_text=_say_menu())
 
+    # ===== TASACIÓN =====
     if stage == "tas_op":
         t = _strip_accents(text)
         if "venta" in t:
@@ -701,6 +717,51 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             closing_text=""
         )
 
+    # ===== ALQUILER TEMPORAL =====
+    if stage == "temp_ask_addr":
+        s["temp_addr_or_link"] = text.strip() or "no informado"
+
+        # Si viene un link y coincide con una propiedad en BD, guardamos la ficha para el asesor
+        row_link = _try_property_from_link_or_slug(text)
+        if row_link:
+            s["temp_prop_row"] = row_link
+            s["temp_prop_brief"] = render_property_card_db(row_link, intent="alquiler")
+
+        s["stage"] = "temp_from_date"
+        return QualifyOut(
+            reply_text="Perfecto 🙌 ¿Desde qué fecha necesitás el alquiler temporal? (formato sugerido: DD/MM/AAAA)"
+        )
+
+    if stage == "temp_from_date":
+        s["temp_desde"] = text.strip() or "no informado"
+        s["stage"] = "temp_to_date"
+        return QualifyOut(
+            reply_text="Genial 👍 ¿Hasta qué fecha lo necesitás?"
+        )
+
+    if stage == "temp_to_date":
+        s["temp_hasta"] = text.strip() or "no informado"
+        s["stage"] = "done"
+
+        resumen = (
+            "Consulta de *Alquiler Temporal* 🏖️\n"
+            f"Chat: {chat_id}\n"
+            f"Dirección/Link: {s.get('temp_addr_or_link','N/D')}\n"
+            f"Desde: {s.get('temp_desde','N/D')}\n"
+            f"Hasta: {s.get('temp_hasta','N/D')}\n"
+        )
+
+        if s.get("temp_prop_brief"):
+            resumen += "\nFicha detectada:\n" + s["temp_prop_brief"]
+
+        return QualifyOut(
+            reply_text="Perfecto, te derivo con un asesor humano que te contactará por acá. ¡Muchas gracias! 🙌",
+            vendor_push=True,
+            vendor_message=resumen,
+            closing_text=_farewell(),
+        )
+
+    # ===== ALQUILER/VENTA (buscar ficha) =====
     if stage == "ask_zone_or_address":
         row_link = _try_property_from_link_or_slug(text)
         if row_link:
@@ -716,15 +777,6 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             else:
                 s["last_prompt"] = "qual_disp_venta"
                 return QualifyOut(reply_text=brief + "\n\n" + _ask_qualify_prompt("venta"))
-
-        if _is_zone_search(text):
-            s["stage"] = "done"
-            msg = (
-                "Perfecto. Te dejo el link donde están todas nuestras propiedades para que puedas ver si alguna te interesa:\n"
-                f"{SITE_URL}\n\n"
-                "Cualquier consulta puntual de una ficha me escribís por acá."
-            )
-            return QualifyOut(reply_text=msg, closing_text=_farewell())
 
         intent = s.get("intent", "alquiler")
         row = search_db_by_address(text)
@@ -750,7 +802,6 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
     if stage == "show_property_asked_qualify":
         intent = s.get("intent", "alquiler")
-        nt = _strip_accents(text)
 
         if intent == "alquiler":
             if s.get("last_prompt") != "qual_disp_alq":
@@ -772,7 +823,9 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 s["disp_venta"] = text.strip() or "no informado"
                 s["stage"] = "ask_handover"
                 s.pop("last_prompt", None)
-                return QualifyOut(reply_text=("Perfecto 😊 ¿Querés que te contacte un asesor humano por este WhatsApp para avanzar?"))
+                return QualifyOut(
+                    reply_text=("Perfecto 😊 ¿Querés que te contacte un asesor humano por este WhatsApp para avanzar?")
+                )
 
     if stage == "ask_handover":
         s.pop("last_prompt", None)
