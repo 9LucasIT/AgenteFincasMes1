@@ -711,71 +711,71 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
     stage = s.get("stage", "menu")
 
-    if stage == "menu":
-    # 1️⃣ PRIORIDAD ABSOLUTA: si hay LINK, se procesa como propiedad SIEMPRE
-    urls = _extract_urls(text)
-    if urls:
-        s["last_link"] = urls[0]
+        if stage == "menu":
+        # 1️⃣ PRIORIDAD ABSOLUTA: si hay LINK, se procesa como propiedad SIEMPRE
+        urls = _extract_urls(text)
+        if urls:
+            s["last_link"] = urls[0]
+    
+            row_link = _try_property_from_link_or_slug(text)
+            if row_link:
+                intent = _infer_intent_from_row(row_link) or "venta"
+                s["intent"] = intent
+                s["prop_row"] = row_link
+                brief = render_property_card_db(row_link, intent=intent)
+                s["prop_brief"] = brief
+                s["stage"] = "show_property_asked_qualify"
+    
+                if intent == "alquiler":
+                    s["last_prompt"] = "qual_disp_alq"
+                    return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
+                else:
+                    s["last_prompt"] = "qual_disp_venta"
+                    return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
+    
+            # 🔥 LINK válido pero NO encontrado en DB → seguimos igual, NO menú
+            s["intent"] = "alquiler"
+            s["stage"] = "ask_link_disp"
+            s["last_prompt"] = "qual_disp_alq_link"
+            return QualifyOut(reply_text=_ask_disponibilidad())
+    
+        # 2️⃣ SIN LINK → recién acá evaluamos opciones del menú
+        if not text:
+            return QualifyOut(reply_text=_say_menu())
+    
+        if _is_temp_rent_intent(text):
+            s["intent"] = "temporal"
+            s["stage"] = "temp_ask_addr"
+            return QualifyOut(
+                reply_text="Perfecto 😊 ¿Tenés *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
+            )
+    
+        if _is_rental_intent(text):
+            s["intent"] = "alquiler"
+            s["stage"] = "ask_zone_or_address"
+            return QualifyOut(reply_text=_ask_zone_or_address())
+    
+        if _is_sale_intent(text):
+            s["intent"] = "venta"
+            s["stage"] = "ask_zone_or_address"
+            return QualifyOut(reply_text=_ask_zone_or_address())
+    
+        if _is_valuation_intent(text):
+            s["intent"] = "tasacion"
+            s["stage"] = "tas_op"
+            s["tas_op"] = None
+            s["tas_prop"] = None
+            s["tas_m2"] = None
+            s["tas_dir"] = None
+            s["tas_exp"] = None
+            s["tas_feat"] = None
+            s["tas_disp"] = None
+            return QualifyOut(
+                reply_text="¡Genial! Para la *tasación*, decime el *tipo de operación*: ¿venta o alquiler?"
+            )
 
-        row_link = _try_property_from_link_or_slug(text)
-        if row_link:
-            intent = _infer_intent_from_row(row_link) or "venta"
-            s["intent"] = intent
-            s["prop_row"] = row_link
-            brief = render_property_card_db(row_link, intent=intent)
-            s["prop_brief"] = brief
-            s["stage"] = "show_property_asked_qualify"
-
-            if intent == "alquiler":
-                s["last_prompt"] = "qual_disp_alq"
-                return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
-            else:
-                s["last_prompt"] = "qual_disp_venta"
-                return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
-
-        # 🔥 LINK válido pero NO encontrado en DB → seguimos igual, NO menú
-        s["intent"] = "alquiler"
-        s["stage"] = "ask_link_disp"
-        s["last_prompt"] = "qual_disp_alq_link"
-        return QualifyOut(reply_text=_ask_disponibilidad())
-
-    # 2️⃣ SIN LINK → recién acá evaluamos opciones del menú
-    if not text:
+        # 3️⃣ ÚNICO caso donde volvemos al menú
         return QualifyOut(reply_text=_say_menu())
-
-    if _is_temp_rent_intent(text):
-        s["intent"] = "temporal"
-        s["stage"] = "temp_ask_addr"
-        return QualifyOut(
-            reply_text="Perfecto 😊 ¿Tenés *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
-        )
-
-    if _is_rental_intent(text):
-        s["intent"] = "alquiler"
-        s["stage"] = "ask_zone_or_address"
-        return QualifyOut(reply_text=_ask_zone_or_address())
-
-    if _is_sale_intent(text):
-        s["intent"] = "venta"
-        s["stage"] = "ask_zone_or_address"
-        return QualifyOut(reply_text=_ask_zone_or_address())
-
-    if _is_valuation_intent(text):
-        s["intent"] = "tasacion"
-        s["stage"] = "tas_op"
-        s["tas_op"] = None
-        s["tas_prop"] = None
-        s["tas_m2"] = None
-        s["tas_dir"] = None
-        s["tas_exp"] = None
-        s["tas_feat"] = None
-        s["tas_disp"] = None
-        return QualifyOut(
-            reply_text="¡Genial! Para la *tasación*, decime el *tipo de operación*: ¿venta o alquiler?"
-        )
-
-    # 3️⃣ ÚNICO caso donde volvemos al menú
-    return QualifyOut(reply_text=_say_menu())
 
 
     if stage == "tas_op":
