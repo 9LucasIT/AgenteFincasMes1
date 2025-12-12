@@ -236,6 +236,27 @@ def search_db_by_address(raw_text: str) -> Optional[dict]:
         except Exception:
             pass
 
+def search_db_by_id(pid: int) -> Optional[dict]:
+    conn = _safe_connect()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT id, direccion, zona, tipo_propiedad, ambientes, dormitorios, cochera,
+                       precio_venta, precio_alquiler, total_construido, superficie, expensas
+                FROM `{MYSQL_TABLE}`
+                WHERE id = %s
+                LIMIT 1;
+            """, (pid,))
+            return cur.fetchone()
+    finally:
+        try:
+            conn.close()
+        except:
+            pass
+
+
 def search_db_by_zone_token(token: str) -> Optional[dict]:
     token = token.strip()
     if not token:
@@ -439,13 +460,14 @@ def _extract_urls(text: str) -> List[str]:
 def _slug_to_candidate_text(url: str) -> str:
     try:
         p = urlparse(url)
-        path = unquote(p.path or "")
+        path = unquote(p.path or "")  
         path = path.replace("-", " ").replace(",", " ")
         path = re.sub(r"[_/]+", " ", path)
         path = re.sub(r"\s+", " ", path)
         return path.strip()
     except Exception:
         return ""
+
 def _infer_intent_from_row(row: dict) -> Optional[str]:
     venta = _s(row.get("precio_venta")).lower()
     alqu = _s(row.get("precio_alquiler")).lower()
@@ -464,17 +486,34 @@ def _try_property_from_link_or_slug(text: str) -> Optional[dict]:
     urls = _extract_urls(text)
     if not urls:
         return None
+
     for u in urls:
-        cand = _slug_to_candidate_text(u)
-        if cand:
-            row = search_db_by_address(cand)
+        # 1) EXTRAER ID DIRECTO DESDE URL (FORMATO URUGUAY)
+        # ej: /Apartamento/2075/...  → ID = 2075
+        m = re.search(r"/(\d{2,6})/", u)
+        if m:
+            pid = int(m.group(1))
+            row = search_db_by_id(pid)
+            if row:
+                return row  # Match directo, el más correcto
+
+        # 2) BÚSQUEDA POR SLUG (fallback)
+        slug = _slug_to_candidate_text(u)
+        if slug:
+            # Buscar por dirección
+            row = search_db_by_address(slug)
             if row:
                 return row
-            for tk in _tokens_from_text(cand):
+
+            # Buscar tokens sueltos (barrios / zonas)
+            for tk in _tokens_from_text(slug):
                 row2 = search_db_by_zone_token(tk)
                 if row2:
                     return row2
+
+    # 3) NO ENCONTRÓ NADA — Opción C: seguir el flujo normal
     return None
+
 
 def _mismatch_msg(user_op: str, prop_op: str) -> str:
     return (
@@ -599,8 +638,30 @@ async def qualify(body: QualifyIn) -> QualifyOut:
     stage = s.get("stage", "menu")
 
     if stage == "menu":
-        if not text:
-            return QualifyOut(reply_text=_say_menu())
+    if not text:
+        return QualifyOut(reply_text=_say_menu())
+
+    # Detectar link aunque sea primer mensaje
+    urls_menu = _extract_urls(text)
+    if urls_menu:
+        s["last_link"] = urls_menu[0]
+        # Intentar match directo
+        row_link = _try_property_from_link_or_slug(text)
+        if row_link:
+            prop_op = _infer_intent_from_row(row_link) or "venta"
+            s["prop_row"] = row_link
+            s["intent"] = prop_op
+            brief = render_property_card_db(row_link, intent=prop_op)
+            s["prop_brief"] = brief
+            s["stage"] = "show_property_asked_qualify"
+            if prop_op == "alquiler":
+                s["last_prompt"] = "qual_disp_alq"
+                return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
+            else:
+                s["last_prompt"] = "qual_disp_venta"
+                return QualifyOut(reply_text=brief + "\n\n" + _ask_qualify_prompt("venta"))
+        # Si no la encontró, seguimos flujo normal de la opción C
+
 
         # Si el usuario envía un link en el primer mensaje, intentamos reconocer la propiedad
         urls_menu = _extract_urls(text)
