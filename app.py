@@ -3,7 +3,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from typing import Optional, Dict, Any, List
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 import httpx
 from fastapi import FastAPI
@@ -26,7 +26,7 @@ app = FastAPI(title="FastAPI WhatsApp Agent (DB)", version="2025-11-03")
 
 # =============== IO ===============
 class QualifyIn(BaseModel):
-    chatId: str
+    chatId: Optional[str] = ""
     message: Optional[str] = ""
     isFromMe: Optional[bool] = False
     senderName: Optional[str] = ""
@@ -439,14 +439,13 @@ def _extract_urls(text: str) -> List[str]:
 def _slug_to_candidate_text(url: str) -> str:
     try:
         p = urlparse(url)
-        slug = (p.path or "").strip("/").replace("-", " ")
-        slug = re.sub(r"[_/]+", " ", slug)
-        slug = re.sub(r"%[0-9A-Fa-f]{2}", " ", slug)
-        slug = re.sub(r"\s+", " ", slug)
-        return slug.strip()
+        path = unquote(p.path or "")
+        path = path.replace("-", " ").replace(",", " ")
+        path = re.sub(r"[_/]+", " ", path)
+        path = re.sub(r"\s+", " ", path)
+        return path.strip()
     except Exception:
         return ""
-
 def _infer_intent_from_row(row: dict) -> Optional[str]:
     venta = _s(row.get("precio_venta")).lower()
     alqu = _s(row.get("precio_alquiler")).lower()
@@ -579,6 +578,10 @@ def _ensure_session(chat_id: str):
 # =============== Endpoint principal ===============
 @app.post("/qualify", response_model=QualifyOut)
 async def qualify(body: QualifyIn) -> QualifyOut:
+    # Ignorar requests inválidos sin chatId (p.ej. llamados internos de n8n)
+    if not body.chatId:
+        return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
+
     chat_id = body.chatId
     text = (body.message or "").strip()
 
@@ -598,6 +601,11 @@ async def qualify(body: QualifyIn) -> QualifyOut:
     if stage == "menu":
         if not text:
             return QualifyOut(reply_text=_say_menu())
+
+        # Si el usuario envía un link en el primer mensaje, intentamos reconocer la propiedad
+        urls_menu = _extract_urls(text)
+        if urls_menu:
+            s["last_link"] = urls_menu[0]
 
         # Alquiler temporal (opción 4)
         if _is_temp_rent_intent(text):
@@ -763,6 +771,10 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
     # ===== ALQUILER/VENTA (buscar ficha) =====
     if stage == "ask_zone_or_address":
+        urls_zone = _extract_urls(text)
+        if urls_zone:
+            s["last_link"] = urls_zone[0]
+
         row_link = _try_property_from_link_or_slug(text)
         if row_link:
             intent_infer = _infer_intent_from_row(row_link) or s.get("intent") or "venta"
@@ -846,12 +858,17 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             if s.get("intent") == "alquiler" and s.get("garantia"):
                 gar_line = f"Garantía: {s['garantia']}\n"
 
+            link_line = ""
+            if s.get("last_link"):
+                link_line = f"Link enviado por el cliente: {s['last_link']}\n"
+
             vendor_msg = (
                 "Lead calificado desde WhatsApp.\n"
                 f"Chat: {chat_id}\n"
                 f"{op_line}"
                 f"{gar_line}"
                 f"{disp}"
+                f"{link_line}"
                 f"{s.get('prop_brief','')}\n"
             )
 
