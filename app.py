@@ -63,18 +63,18 @@ def _s(v) -> str:
 def _say_menu() -> str:
     return (
         "¡Hola! 👋 Soy el asistente virtual de *Inmobiliaria Fincas del Este*.\n"
-        "Gracias por contactarte con nosotros. ¿En qué te puedo ayudar hoy?\n\n"
+        "Estoy acá para ayudarte a encontrar lo que estas buscando 😊. ¿En qué te puedo ayudar hoy?\n\n"
         "1️⃣ *Alquileres*\n"
         "2️⃣ *Ventas*\n"
         "3️⃣ *Tasaciones*\n"
         "4️⃣ *Alquiler temporal*\n\n"
-        "📝 Podés escribir el *número* o el *nombre* de la opción.\n"
+        "📝 Podés escribir el *número* o el *nombre* de la opción que gustes.\n"
         "🔄 Si querés empezar de nuevo, escribí *\"reset\"*."
     )
 
 
 def _ask_zone_or_address() -> str:
-    return "¿Tenés *dirección exacta* o *link* de la propiedad que te interesa?"
+    return "¿Tenés una *dirección exacta* o *link* de la propiedad que te interesa?"
 
 
 def _ask_disponibilidad() -> str:
@@ -747,7 +747,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             s["intent"] = "temporal"
             s["stage"] = "temp_ask_addr"
             return QualifyOut(
-                reply_text="Perfecto 😊 ¿Tenés *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
+                reply_text="Perfecto 😊 ¿Tenés una *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
             )
     
         if _is_rental_intent(text):
@@ -771,7 +771,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             s["tas_feat"] = None
             s["tas_disp"] = None
             return QualifyOut(
-                reply_text="¡Genial! Para la *tasación*, decime el *tipo de operación*: ¿venta o alquiler?"
+                reply_text="¡Genial! Para la *tasación*, contame el *tipo de operación*: ¿venta o alquiler?"
             )
 
         # 3️⃣ ÚNICO caso donde volvemos al menú
@@ -788,13 +788,13 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             return QualifyOut(reply_text="¿Me confirmás el *tipo de operación*? (venta o alquiler)")
         s["stage"] = "tas_prop"
         return QualifyOut(
-            reply_text="Perfecto. ¿Cuál es el *tipo de propiedad*? (ej.: departamento, casa, local, oficina)"
+            reply_text="Perfecto. Comentame ahora, ¿cuál es el *tipo de propiedad*? (ej.: departamento, casa, local, oficina)"
         )
 
     if stage == "tas_prop":
         s["tas_prop"] = text.strip() or "no informado"
         s["stage"] = "tas_m2"
-        return QualifyOut(reply_text="Gracias. ¿Cuántos *metros cuadrados* aproximados tiene la propiedad?")
+        return QualifyOut(reply_text="Muchisimas gracias 😊. ¿Cuántos *metros cuadrados* aproximados tiene la propiedad?")
 
     if stage == "tas_m2":
         n = _num_from_text(text)
@@ -803,7 +803,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         s["tas_m2"] = n
         s["stage"] = "tas_dir"
         return QualifyOut(
-            reply_text="Anotado. ¿Cuál es la *dirección exacta* del inmueble? (calle y número; si podés, piso/depto)"
+            reply_text="Anotado 👍. ¿Cuál es la *dirección exacta* del inmueble? (calle y número; si podés, piso/depto)"
         )
 
     if stage == "tas_dir":
@@ -824,7 +824,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
             s["tas_exp"] = f"${val:,}".replace(",", ".") if val else (text.strip() or "no informado")
         s["stage"] = "tas_feat"
         return QualifyOut(
-            reply_text="¿Dispone *balcón, patio, amenities o estudio de factibilidad*? Podés responder con una lista (ej.: “balcón y amenities”) o “no”."
+            reply_text="Contame, ¿dispone *balcón, patio, amenities o estudio de factibilidad*? Podés responder con una lista (ej.: “balcón y amenities”) o “no”."
         )
 
     if stage == "tas_feat":
@@ -843,7 +843,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         s["tas_feat"] = ", ".join(feats) if feats else "no"
         s["stage"] = "tas_disp"
         return QualifyOut(
-            reply_text="¡Último dato! ¿Cuál es tu *disponibilidad horaria* aproximada para que te contacte un asesor?"
+            reply_text="¡Último dato! Decime es tu *disponibilidad horaria* aproximada para que te contacte un asesor"
         )
 
     if stage == "tas_disp":
@@ -878,7 +878,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
         s["stage"] = "temp_from_date"
         return QualifyOut(
-            reply_text="Perfecto 🙌 ¿Desde qué fecha necesitás el alquiler temporal? (formato sugerido: DD/MM/AAAA)"
+            reply_text="Perfecto 🙌. Comentame, ¿desde qué fecha necesitás el alquiler temporal? (formato sugerido: DD/MM/AAAA)"
         )
 
     if stage == "temp_from_date":
@@ -980,7 +980,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         s["stage"] = "ask_handover"
         s.pop("last_prompt", None)
         return QualifyOut(
-            reply_text=("Perfecto 😊 ¿Querés que te contacte un asesor humano por este WhatsApp para avanzar?")
+            reply_text=("Perfecto 😊 ¿Te gustaria que te contacte un asesor humano por este WhatsApp para avanzar?")
         )
 
     if stage == "show_property_asked_qualify":
