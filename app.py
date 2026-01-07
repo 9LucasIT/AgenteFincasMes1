@@ -701,10 +701,24 @@ async def qualify(body: QualifyIn) -> QualifyOut:
 
     chat_id = body.chatId
     text = _normalize_user_text(body.message or "")
-
+    
     print("IN_MSG_RAW:", repr(body.message))
     print("IN_MSG_NORM:", repr(text))
 
+    if re.fullmatch(r"\{\{SWE001\}\}", text or ""):
+    _ensure_session(chat_id)
+    return QualifyOut(
+        reply_text="Perdón 🙏 WhatsApp me envió tu mensaje vacío. ¿Me lo reenviás por favor?",
+        vendor_push=True,
+        vendor_message=(
+            "⚠️ GREEN-API SWE001: llegó un mensaje vacío/no legible.\n"
+            f"Chat: {chat_id}\n"
+            "Acción requerida: revisar el teléfono vinculado (WhatsApp abierto/conectado) o re-vincular dispositivos.\n"
+        ),
+        closing_text=""
+    )
+
+    
     if re.fullmatch(r"\{\{[A-Za-z0-9_\-\.]+\}\}", text or ""):
         return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
 
