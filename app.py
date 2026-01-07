@@ -40,6 +40,7 @@ class QualifyOut(BaseModel):
     closing_text: str = ""
 
 
+# =============== Texto helpers ===============
 
 def _clean_invisible(s: str) -> str:
     if not s:
@@ -55,8 +56,11 @@ def _clean_invisible(s: str) -> str:
     return s
 
 
-
-# =============== Texto helpers ===============
+def _normalize_user_text(s: str) -> str:
+    s = _clean_invisible(s or "")
+    s = s.strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
 
 
 def _strip_accents(s: str) -> str:
@@ -65,7 +69,6 @@ def _strip_accents(s: str) -> str:
         return ""
     nfkd = unicodedata.normalize("NFKD", s)
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
-
 
 
 def _s(v) -> str:
@@ -349,7 +352,6 @@ def search_db_by_zone_token(token: str) -> Optional[dict]:
 
 # =============== Render ficha ===============
 
-
 def _to_int(x, default=0):
     try:
         if x is None:
@@ -389,10 +391,6 @@ def _has_price(v) -> bool:
 
 
 def _fmt_expensas_guess(raw) -> str:
-    """
-    Formatea 'expensas' viniendo como número o texto.
-    Evita el bug de 357000.0 -> 3.570.000 parseando el primer token numérico con decimales.
-    """
     if raw is None:
         return "—"
     s = _s(raw)
@@ -501,14 +499,12 @@ STOPWORDS = {"en", "de", "del", "la", "el", "y", "a", "con", "por", "para", "un"
 
 
 def _extract_urls(text: str) -> List[str]:
-    """Extrae URLs de un texto, tolerando caracteres invisibles de WhatsApp."""
     if not text:
         return []
     clean = _clean_invisible(text).strip()
     url_regex = re.compile(r"(https?://\S+)", flags=re.IGNORECASE)
     matches = url_regex.findall(clean)
     return matches or []
-
 
 
 def _slug_to_candidate_text(url: str) -> str:
@@ -545,8 +541,6 @@ def _try_property_from_link_or_slug(text: str) -> Optional[dict]:
         return None
 
     for u in urls:
-        # 1) Detectar ID aunque sea el último segmento de la URL
-        #    Ej: /Apartamento/2011/  -> 2011
         try:
             path = urlparse(u).path or ""
             segments = [seg for seg in path.split("/") if seg.isdigit()]
@@ -558,7 +552,6 @@ def _try_property_from_link_or_slug(text: str) -> Optional[dict]:
         except Exception:
             pass
 
-        # 2) Búsqueda por slug (dirección / zona)
         slug = _slug_to_candidate_text(u)
         if slug:
             row = search_db_by_address(slug)
@@ -570,7 +563,6 @@ def _try_property_from_link_or_slug(text: str) -> Optional[dict]:
                 if row2:
                     return row2
 
-    # 3) Si no se encontró nada, devolvemos None (el flujo superior decide qué hacer)
     return None
 
 
@@ -613,7 +605,7 @@ def _parse_guarantee_choice(t: str) -> str:
 
 
 def _wants_reset(t: str) -> bool:
-    t = _strip_accents(t)
+    t = _strip_accents(_normalize_user_text(t))
     return t in {"reset", "reiniciar", "restart"}
 
 
@@ -702,16 +694,19 @@ def _ensure_session(chat_id: str):
 
 # =============== Endpoint principal ===============
 
-
 @app.post("/qualify", response_model=QualifyOut)
 async def qualify(body: QualifyIn) -> QualifyOut:
-    # FIX n8n: si llega un request sin chatId, lo ignoramos sin error
     if not body.chatId:
         return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
 
     chat_id = body.chatId
-    text = _clean_invisible(body.message or "").strip()
+    text = _normalize_user_text(body.message or "")
 
+    print("IN_MSG_RAW:", repr(body.message))
+    print("IN_MSG_NORM:", repr(text))
+
+    if re.fullmatch(r"\{\{[A-Za-z0-9_\-\.]+\}\}", text or ""):
+        return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
 
     if body.isFromMe:
         return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
@@ -726,11 +721,10 @@ async def qualify(body: QualifyIn) -> QualifyOut:
     stage = s.get("stage", "menu")
 
     if stage == "menu":
-        # 1️⃣ PRIORIDAD ABSOLUTA: si hay LINK, se procesa como propiedad SIEMPRE
         urls = _extract_urls(text)
         if urls:
             s["last_link"] = urls[0]
-    
+
             row_link = _try_property_from_link_or_slug(text)
             if row_link:
                 intent = _infer_intent_from_row(row_link) or "venta"
@@ -739,41 +733,72 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 brief = render_property_card_db(row_link, intent=intent)
                 s["prop_brief"] = brief
                 s["stage"] = "show_property_asked_qualify"
-    
+
                 if intent == "alquiler":
                     s["last_prompt"] = "qual_disp_alq"
                     return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
                 else:
                     s["last_prompt"] = "qual_disp_venta"
                     return QualifyOut(reply_text=brief + "\n\n" + _ask_disponibilidad())
-    
-            # 🔥 LINK válido pero NO encontrado en DB → seguimos igual, NO menú
+
             s["intent"] = "alquiler"
             s["stage"] = "ask_link_disp"
             s["last_prompt"] = "qual_disp_alq_link"
             return QualifyOut(reply_text=_ask_disponibilidad())
-    
-        # 2️⃣ SIN LINK → recién acá evaluamos opciones del menú
+
         if not text:
             return QualifyOut(reply_text=_say_menu())
-    
+
+        tmenu = _strip_accents(text)
+
+        if tmenu in {"1", "1-", "1 -"}:
+            s["intent"] = "alquiler"
+            s["stage"] = "ask_zone_or_address"
+            return QualifyOut(reply_text=_ask_zone_or_address())
+
+        if tmenu in {"2", "2-", "2 -"}:
+            s["intent"] = "venta"
+            s["stage"] = "ask_zone_or_address"
+            return QualifyOut(reply_text=_ask_zone_or_address())
+
+        if tmenu in {"3", "3-", "3 -"}:
+            s["intent"] = "tasacion"
+            s["stage"] = "tas_op"
+            s["tas_op"] = None
+            s["tas_prop"] = None
+            s["tas_m2"] = None
+            s["tas_dir"] = None
+            s["tas_exp"] = None
+            s["tas_feat"] = None
+            s["tas_disp"] = None
+            return QualifyOut(
+                reply_text="¡Genial! Para la *tasación*, contame el *tipo de operación*: ¿venta o alquiler?"
+            )
+
+        if tmenu in {"4", "4-", "4 -"}:
+            s["intent"] = "temporal"
+            s["stage"] = "temp_ask_addr"
+            return QualifyOut(
+                reply_text="Perfecto 😊 ¿Tenés una *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
+            )
+
         if _is_temp_rent_intent(text):
             s["intent"] = "temporal"
             s["stage"] = "temp_ask_addr"
             return QualifyOut(
                 reply_text="Perfecto 😊 ¿Tenés una *dirección exacta* o *link* de la propiedad que querés alquilar temporalmente?"
             )
-    
+
         if _is_rental_intent(text):
             s["intent"] = "alquiler"
             s["stage"] = "ask_zone_or_address"
             return QualifyOut(reply_text=_ask_zone_or_address())
-    
+
         if _is_sale_intent(text):
             s["intent"] = "venta"
             s["stage"] = "ask_zone_or_address"
             return QualifyOut(reply_text=_ask_zone_or_address())
-    
+
         if _is_valuation_intent(text):
             s["intent"] = "tasacion"
             s["stage"] = "tas_op"
@@ -788,9 +813,7 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 reply_text="¡Genial! Para la *tasación*, contame el *tipo de operación*: ¿venta o alquiler?"
             )
 
-        # 3️⃣ ÚNICO caso donde volvemos al menú
         return QualifyOut(reply_text=_say_menu())
-
 
     if stage == "tas_op":
         t = _strip_accents(text)
@@ -923,13 +946,10 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         )
 
     if stage == "ask_zone_or_address":
-        # El usuario ya está en el flujo de una operación concreta (alquiler/venta).
-        # Si manda un link, lo guardamos y NO volvemos a pedir dirección nunca más.
         urls_zone = _extract_urls(text)
         if urls_zone:
             s["last_link"] = urls_zone[0]
 
-        # 1) Intentar detectar ficha a partir del link o slug
         row_link = _try_property_from_link_or_slug(text)
         if row_link:
             intent_infer = _infer_intent_from_row(row_link) or s.get("intent") or "venta"
@@ -946,9 +966,6 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 s["last_prompt"] = "qual_disp_venta"
                 return QualifyOut(reply_text=brief + "\n\n" + _ask_qualify_prompt("venta"))
 
-        # 2) Si el mensaje tiene link pero no encontramos ficha en la base,
-        #    NO volvemos a pedir dirección: pasamos directo a preguntar disponibilidad
-        #    y luego derivamos al asesor con el link.
         if urls_zone:
             s["stage"] = "ask_link_disp"
             intent2 = s.get("intent", "alquiler")
@@ -959,7 +976,6 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 s["last_prompt"] = "qual_disp_alq_link"
                 return QualifyOut(reply_text=_ask_disponibilidad())
 
-        # 3) Caso sin link: intentamos buscar por dirección escrita
         intent = s.get("intent", "alquiler")
         row = search_db_by_address(text)
 
@@ -977,7 +993,6 @@ async def qualify(body: QualifyIn) -> QualifyOut:
                 s["last_prompt"] = "qual_disp_venta"
                 return QualifyOut(reply_text=brief2 + "\n\n" + _ask_qualify_prompt("venta"))
 
-        # 4) Solo si no hay link ni coincidencia por dirección, pedimos la dirección exacta
         return QualifyOut(
             reply_text=(
                 "No pude identificar la ficha. "
