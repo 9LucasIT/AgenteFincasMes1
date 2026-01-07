@@ -40,14 +40,32 @@ class QualifyOut(BaseModel):
     closing_text: str = ""
 
 
+
+def _clean_invisible(s: str) -> str:
+    if not s:
+        return ""
+    s = (
+        s.replace("\u200b", "")
+         .replace("\u200e", "")
+         .replace("\u200f", "")
+         .replace("\u2060", "")
+         .replace("\ufeff", "")
+    )
+    s = "".join(c for c in s if unicodedata.category(c) != "Cf")
+    return s
+
+
+
 # =============== Texto helpers ===============
 
 
 def _strip_accents(s: str) -> str:
+    s = _clean_invisible(s or "")
     if not s:
         return ""
     nfkd = unicodedata.normalize("NFKD", s)
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+
 
 
 def _s(v) -> str:
@@ -697,7 +715,8 @@ async def qualify(body: QualifyIn) -> QualifyOut:
         return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
 
     chat_id = body.chatId
-    text = (body.message or "").strip()
+    text = _clean_invisible(body.message or "").strip()
+
 
     if body.isFromMe:
         return QualifyOut(reply_text="", vendor_push=False, vendor_message="", closing_text="")
