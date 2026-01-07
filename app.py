@@ -504,16 +504,11 @@ def _extract_urls(text: str) -> List[str]:
     """Extrae URLs de un texto, tolerando caracteres invisibles de WhatsApp."""
     if not text:
         return []
-    clean = (
-        text.replace("\u200b", "")
-            .replace("\u2060", "")
-            .replace("\ufeff", "")
-            .strip()
-    )
-    # Regex simple y robusta: cualquier secuencia sin espacios que empiece con http(s)://
+    clean = _clean_invisible(text).strip()
     url_regex = re.compile(r"(https?://\S+)", flags=re.IGNORECASE)
     matches = url_regex.findall(clean)
     return matches or []
+
 
 
 def _slug_to_candidate_text(url: str) -> str:
