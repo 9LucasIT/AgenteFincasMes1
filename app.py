@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 
-SITE_URL = "https://www.fincasdeleste.com.uy/"
+SITE_URL = "https://www.allegracasainmobiliaria.com.mx/"
 
 DATABASE_URL = os.getenv("DATABASE_URL", "") or os.getenv("MYSQL_URL", "")
 MYSQL_HOST = os.getenv("MYSQLHOST") or os.getenv("MYSQL_HOST")
@@ -62,7 +62,7 @@ def _s(v) -> str:
 
 def _say_menu() -> str:
     return (
-        "¡Hola! 👋 Soy el asistente virtual de *Inmobiliaria Fincas del Este*.\n"
+        "¡Hola! 👋 Soy el asistente virtual de *Allegra Casa Inmobiliaria*.\n"
         "Estoy acá para ayudarte a encontrar lo que estas buscando 😊. ¿En qué te puedo ayudar hoy?\n\n"
         "1️⃣ *Alquileres*\n"
         "2️⃣ *Ventas*\n"
